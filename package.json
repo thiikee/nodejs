@@ -1,0 +1,17 @@
+{
+  "name": "nodejs",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "firebase-admin": "^11.11.1",
+    "nodemon": "^3.0.2",
+    "psd": "^3.4.0",
+    "sqlite3": "^5.1.6"
+  }
+}
