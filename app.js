@@ -3,10 +3,7 @@ const app = express();
 const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
-
 const sqlite3 = require("sqlite3");
-const db = new sqlite3.Database("./fruit-basket.db");
-
 app.use(express.static('../thiikee.github.io'));
 
 //app.use((req, res, next) => {
