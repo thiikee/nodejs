@@ -1,3 +1,8 @@
+function addHours(d, h) {
+  d.setTime(d.getTime() + (h*60*60*1000));
+  return d;
+}
+
 const admin = require('firebase-admin');
 const fs = require('fs');
 
@@ -15,7 +20,7 @@ postsRef.get().then((querySnapshot) => {
     //console.log(doc.data().title);
     const id = doc.id;
     const postData = doc.data();
-    const { title, type, imageIds, movie, albums, women, artists, tags, comment, have, love, cover, use, discarded, createdAt, updatedAt } = postData;
+    const { title, type, imageIds, movie, albums, women, artists, tags, m3u8, comment, have, love, cover, use, discarded, createdAt, updatedAt } = postData;
     const post = {
       id,
       title,
@@ -26,14 +31,15 @@ postsRef.get().then((querySnapshot) => {
       women,
       artists,
       tags,
+      m3u8,
       comment,
       have,
       love,
       cover,
       use,
       discarded,
-      createdAt: createdAt.toDate(),
-      updatedAt: updatedAt.toDate()
+      createdAt: addHours(new Date(createdAt.seconds * 1000), 9),
+      updatedAt: addHours(new Date(updatedAt.seconds * 1000), 9)
     };
     array.push(post);
   });

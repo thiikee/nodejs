@@ -14,12 +14,12 @@ db.serialize(() => {
   db.run('delete from albums');
   db.run('delete from images');
   db.run('delete from movies');
-  db.run('delete from sqlite_sequence where name = "posts"');
+  //db.run('delete from sqlite_sequence where name = "posts"');
 
   const postsJson = JSON.parse(fs.readFileSync('../../posts.json', 'utf8'));
   for (const key in postsJson) {
     //console.log(postsJson[key].title);
-    db.run('insert into posts(id, title, type, have, love, cover, use, comment, discarded, createdAt, updatedAt) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', postsJson[key].id, postsJson[key].title, postsJson[key].type, postsJson[key].have, postsJson[key].love, postsJson[key].cover, postsJson[key].use, postsJson[key].comment, postsJson[key].discarded, postsJson[key].createdAt, postsJson[key].updatedAt);
+    db.run('insert into posts(id, title, type, have, love, cover, use, comment, discarded, createdAt, updatedAt, m3u8) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', postsJson[key].id, postsJson[key].title, postsJson[key].type, postsJson[key].have, postsJson[key].love, postsJson[key].cover, postsJson[key].use, postsJson[key].comment, postsJson[key].discarded, postsJson[key].createdAt, postsJson[key].updatedAt, postsJson[key].m3u8);
   }
 
   const womenJson = JSON.parse(fs.readFileSync('../../women.json', 'utf8'));
