@@ -31,20 +31,32 @@ const path = require('path');
 
 const CDP_ENDPOINT = 'http://localhost:9222';
 const OUTPUT_DIR = path.join(__dirname, 'downloads');
-const STATE_FILE = path.join(__dirname, 'download_state.json'); // 進捗保存（再開用）
+const STATE_FILE = (id) => path.join(OUTPUT_DIR, `state_contents_${id}.json`); // 進捗保存（再開用）
+const STATE_FILE_POST = (id) => path.join(OUTPUT_DIR, `state_posts_${id}.json`); // 進捗保存（再開用）
 const DOWNLOAD_BUTTON_TEXTS = ['Download', 'ダウンロード'];
 
 // ---- ユーティリティ ----
 
-function loadState() {
-  if (fs.existsSync(STATE_FILE)) {
-    return JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'));
+function loadState(id) {
+  if (fs.existsSync(STATE_FILE(id))) {
+    return JSON.parse(fs.readFileSync(STATE_FILE(id), 'utf-8'));
   }
   return { done: {} };
 }
 
-function saveState(state) {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+function saveState(state, id) {
+  fs.writeFileSync(STATE_FILE(id), JSON.stringify(state, null, 2));
+}
+
+function loadStatePost(id) {
+  if (fs.existsSync(STATE_FILE_POST(id))) {
+    return JSON.parse(fs.readFileSync(STATE_FILE_POST(id), 'utf-8'));
+  }
+  return { done: {} };
+}
+
+function saveStatePost(state, id) {
+  fs.writeFileSync(STATE_FILE_POST(id), JSON.stringify(state, null, 2));
 }
 
 function extFromMime(mimeType, fallback) {
@@ -207,7 +219,6 @@ async function waitForThumbnail(page, id, alt) {
 
 (async () => {
   fs.mkdirSync(OUTPUT_DIR, { recursive: true });
-  const state = loadState();
 
   let browser;
   try {
@@ -304,6 +315,10 @@ async function waitForThumbnail(page, id, alt) {
   if (myUserId) {
     console.log(`自分のuserId: ${myUserId}`);
   }
+
+  const state = loadState(myUserId);
+  const statePost = loadStatePost(myUserId);
+
   const topPosts = Array.from(collectedPosts.values()).filter(
     (p) => !myUserId || p.userId === myUserId
   );
@@ -323,6 +338,11 @@ async function waitForThumbnail(page, id, alt) {
 
   // ---- STEP 2: 各投稿をUIクリックでダウンロード ----
   for (const [index, topPost] of topPosts.entries()) {
+    if (statePost.done[topPost.id]) {
+      console.log(`  スキップ(投稿取得済み): ${topPost.id}`);
+      continue;
+    }
+
     console.log(`\n[${index + 1}/${topPosts.length}] 投稿を開く: ${topPost.id}`);
 
     // 毎回 /imagine/saved に戻ってから開く(状態をリセットして確実にする)
@@ -363,7 +383,7 @@ async function waitForThumbnail(page, id, alt) {
     let seqno = subItems.length - 1;
     for (const sub of subItems) {
       if (state.done[sub.id]) {
-        console.log(`  スキップ(取得済み): ${sub.id}`);
+        console.log(`  スキップ(動画・画像取得済み): ${sub.id}`);
         continue;
       }
 
@@ -386,7 +406,7 @@ async function waitForThumbnail(page, id, alt) {
       try {
         await clickDownloadAndSave(page, outPath, sub.id);
         state.done[sub.id] = true;
-        saveState(state);
+        saveState(state, myUserId);
         console.log(`  保存しました: ${outPath}`);
         seqno--;
       } catch (e) {
@@ -396,6 +416,9 @@ async function waitForThumbnail(page, id, alt) {
 
       await page.waitForTimeout(1000); // サーバー/UI負荷軽減
     }
+    
+    statePost.done[topPost.id] = true;
+    saveStatePost(statePost, myUserId);
   }
 
   console.log('\n完了しました。');
