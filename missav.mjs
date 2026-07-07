@@ -116,8 +116,8 @@ if (!VIDEO_PAGE) {
             console.log(segmentUrl);
 
             const base64 = await retry(
-		        () => fetchBinary(page, segmentUrl)
-	        );
+		() => fetchBinary(page, segmentUrl)
+	    );
 
             await fs.writeFile(
                 path.join(

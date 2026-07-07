@@ -20,7 +20,7 @@ postsRef.get().then((querySnapshot) => {
     //console.log(doc.data().title);
     const id = doc.id;
     const postData = doc.data();
-    const { title, type, imageIds, movie, albums, women, artists, tags, m3u8, comment, have, love, cover, use, discarded, createdAt, updatedAt } = postData;
+    const { title, type, imageIds, movie, albums, women, artists, tags, missav, m3u8, comment, have, love, cover, use, discarded, createdAt, updatedAt } = postData;
     const post = {
       id,
       title,
@@ -31,6 +31,7 @@ postsRef.get().then((querySnapshot) => {
       women,
       artists,
       tags,
+      missav,
       m3u8,
       comment,
       have,
