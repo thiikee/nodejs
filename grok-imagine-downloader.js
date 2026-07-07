@@ -381,11 +381,12 @@ async function waitForThumbnail(page, id, alt) {
       topPost.videos && topPost.videos.length > 0 ? topPost.videos[0].id : topPost.id;
 
     let seqno = subItems.length - 1;
+    console.log(`  動画・画像数: ${subItems.length}`);
     for (const sub of subItems) {
-      if (state.done[sub.id]) {
-        console.log(`  スキップ(動画・画像取得済み): ${sub.id}`);
-        continue;
-      }
+      //if (state.done[sub.id]) {
+      //  console.log(`  スキップ(動画・画像取得済み): ${sub.id}`);
+      //  continue;
+      //}
 
       // 「今実際に表示されているID」と違う場合だけ切り替える。
       //console.log(`  sub.id: ${sub.id}`);
@@ -393,6 +394,7 @@ async function waitForThumbnail(page, id, alt) {
       //if (sub.id !== currentDisplayedId) {
       if (topPost.childPosts.length > 0) {
         await trySelectMediaByIdPost(page, sub.id);
+        //await page.waitForTimeout(1200);
         await page.waitForFunction(
           (id) =>
             document.querySelector(`img[src*="${id}"]`) !== null,
