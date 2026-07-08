@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Grok Imagine ビューア</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1 id="page-title">ユーザーを選択</h1>
+    <nav id="breadcrumb"></nav>
+  </header>
+  <main id="app"></main>
+
+  <div id="video-modal" class="modal hidden">
+    <div class="modal-content">
+      <button id="modal-close" aria-label="閉じる">✕</button>
+      <video id="modal-video" controls autoplay playsinline></video>
+      <img id="modal-image" />
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

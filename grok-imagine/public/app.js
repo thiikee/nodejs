@@ -1,0 +1,386 @@
+const appEl = document.getElementById('app');
+const titleEl = document.getElementById('page-title');
+const breadcrumbEl = document.getElementById('breadcrumb');
+const modal = document.getElementById('video-modal');
+const modalVideo = document.getElementById('modal-video');
+const modalImage = document.getElementById('modal-image');
+const modalClose = document.getElementById('modal-close');
+
+const PAGE_SIZE = 50;
+
+let state = { postId: null };
+let allPosts = []; // {user, postId, thumbnail, tags} の配列(初回のみ取得)
+let allTags = []; // 使われている全タグ(絞り込みチップ用)
+let postsLoaded = false;
+
+let activeTagFilters = new Set();
+let currentPage = 1;
+let selectionMode = false;
+let selectedIds = new Set();
+
+modalClose.addEventListener('click', closeModal);
+modal.addEventListener('click', (e) => {
+  if (e.target === modal) closeModal();
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') closeModal();
+});
+
+function closeModal() {
+  modal.classList.add('hidden');
+  modalVideo.pause();
+  modalVideo.removeAttribute('src');
+  modalVideo.load();
+  modalVideo.classList.add('hidden');
+  modalImage.removeAttribute('src');
+  modalImage.classList.add('hidden');
+}
+
+function openModal(type, src) {
+  if (type === 'video') {
+    modalImage.classList.add('hidden');
+    modalImage.removeAttribute('src');
+    modalVideo.classList.remove('hidden');
+    modalVideo.src = src;
+  } else {
+    modalVideo.classList.add('hidden');
+    modalVideo.pause();
+    modalVideo.removeAttribute('src');
+    modalImage.classList.remove('hidden');
+    modalImage.src = src;
+  }
+  modal.classList.remove('hidden');
+}
+
+async function fetchJson(url, options) {
+  const res = await fetch(url, options);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str == null ? '' : str;
+  return div.innerHTML;
+}
+
+function renderBreadcrumb() {
+  const parts = ['<a href="#" data-nav="posts">投稿一覧</a>'];
+  if (state.postId) {
+    parts.push(`<span>${escapeHtml(state.postId)}</span>`);
+  }
+  breadcrumbEl.innerHTML = parts.join(' / ');
+  breadcrumbEl.querySelectorAll('a[data-nav]').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      showPosts();
+    });
+  });
+}
+
+function renderEmpty(message) {
+  appEl.innerHTML = `<p class="empty">${escapeHtml(message)}</p>`;
+}
+
+// ---- 投稿一覧(全ユーザー横断、ページング、タグ絞り込み、一括タグ付け) ----
+
+async function showPosts() {
+  state = { postId: null };
+  titleEl.textContent = '投稿一覧';
+  renderBreadcrumb();
+
+  if (!postsLoaded) {
+    appEl.innerHTML = '<p class="empty">読み込み中...</p>';
+    try {
+      const [posts, tags] = await Promise.all([fetchJson('/api/posts'), fetchJson('/api/tags')]);
+      allPosts = posts;
+      allTags = tags;
+      postsLoaded = true;
+    } catch (e) {
+      renderEmpty(`読み込みに失敗しました: ${e.message}`);
+      return;
+    }
+  }
+  renderPostsView();
+}
+
+function getFilteredPosts() {
+  if (activeTagFilters.size === 0) return allPosts;
+  return allPosts.filter((p) => {
+    const tags = p.tags || [];
+    for (const t of activeTagFilters) {
+      if (!tags.includes(t)) return false;
+    }
+    return true;
+  });
+}
+
+function renderPostsView() {
+  const filtered = getFilteredPosts();
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const startIdx = (currentPage - 1) * PAGE_SIZE;
+  const pagePosts = filtered.slice(startIdx, startIdx + PAGE_SIZE);
+
+  appEl.innerHTML = '';
+
+  // ---- フィルターバー ----
+  const filterBar = document.createElement('div');
+  filterBar.className = 'filter-bar';
+  filterBar.innerHTML = `
+    <div class="tag-chips">
+      ${allTags
+        .map(
+          (t) =>
+            `<button class="tag-chip ${activeTagFilters.has(t) ? 'active' : ''}" data-tag="${escapeHtml(t)}">${escapeHtml(t)}</button>`
+        )
+        .join('')}
+      ${activeTagFilters.size > 0 ? '<button class="tag-chip clear-chip" data-clear="1">✕ 絞り込み解除</button>' : ''}
+    </div>
+    <button id="selection-toggle" class="mode-toggle">${
+      selectionMode ? '選択モードを終了' : '選択モードで一括タグ付け'
+    }</button>
+  `;
+  appEl.appendChild(filterBar);
+
+  filterBar.querySelectorAll('.tag-chip[data-tag]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.tag;
+      if (activeTagFilters.has(t)) {
+        activeTagFilters.delete(t);
+      } else {
+        activeTagFilters.add(t);
+      }
+      currentPage = 1;
+      renderPostsView();
+    });
+  });
+  const clearBtn = filterBar.querySelector('[data-clear]');
+  if (clearBtn) {
+    clearBtn.addEventListener('click', () => {
+      activeTagFilters.clear();
+      currentPage = 1;
+      renderPostsView();
+    });
+  }
+  filterBar.querySelector('#selection-toggle').addEventListener('click', () => {
+    selectionMode = !selectionMode;
+    if (!selectionMode) selectedIds.clear();
+    renderPostsView();
+  });
+
+  // ---- グリッド ----
+  if (pagePosts.length === 0) {
+    const emptyMsg = document.createElement('p');
+    emptyMsg.className = 'empty';
+    emptyMsg.textContent = '該当する投稿がありません。';
+    appEl.appendChild(emptyMsg);
+  } else {
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    pagePosts.forEach((p) => {
+      const card = document.createElement('div');
+      card.className = 'card post-card';
+      const checked = selectedIds.has(p.postId) ? 'checked' : '';
+      card.innerHTML = `
+        ${selectionMode ? `<div class="select-overlay"><input type="checkbox" ${checked} tabindex="-1" /></div>` : ''}
+        ${
+          p.thumbnail
+            ? `<img src="${p.thumbnail}" loading="lazy" alt="${escapeHtml(p.postId)}" />`
+            : '<div class="no-thumb">画像なし</div>'
+        }
+        ${
+          p.tags && p.tags.length > 0
+            ? `<div class="tag-badges">${p.tags
+                .map(
+                  (t) =>
+                    `<span class="tag-badge">${escapeHtml(t)}<button class="tag-remove" data-remove-tag="${escapeHtml(
+                      t
+                    )}" data-post="${escapeHtml(p.postId)}" title="このタグを外す">×</button></span>`
+                )
+                .join('')}</div>`
+            : ''
+        }
+      `;
+      if (selectionMode) {
+        card.classList.toggle('selected', selectedIds.has(p.postId));
+        card.addEventListener('click', () => {
+          if (selectedIds.has(p.postId)) {
+            selectedIds.delete(p.postId);
+          } else {
+            selectedIds.add(p.postId);
+          }
+          renderPostsView();
+        });
+      } else {
+        card.addEventListener('click', () => showMedia(p.user, p.postId));
+      }
+      grid.appendChild(card);
+    });
+    appEl.appendChild(grid);
+
+    grid.querySelectorAll('.tag-remove').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        removeTagFromPost(btn.dataset.post, btn.dataset.removeTag);
+      });
+    });
+  }
+
+  // ---- ページング ----
+  const pager = document.createElement('div');
+  pager.className = 'pager';
+  pager.innerHTML = `
+    <button id="prev-page" ${currentPage <= 1 ? 'disabled' : ''}>← 前へ</button>
+    <span>${currentPage} / ${totalPages} ページ(${filtered.length}件)</span>
+    <button id="next-page" ${currentPage >= totalPages ? 'disabled' : ''}>次へ →</button>
+  `;
+  pager.querySelector('#prev-page').addEventListener('click', () => {
+    currentPage--;
+    renderPostsView();
+  });
+  pager.querySelector('#next-page').addEventListener('click', () => {
+    currentPage++;
+    renderPostsView();
+  });
+  appEl.appendChild(pager);
+
+  // ---- 選択中の一括タグ付けバー ----
+  if (selectionMode) {
+    const bar = document.createElement('div');
+    bar.className = 'bulk-tag-bar';
+    bar.innerHTML = `
+      <span>${selectedIds.size}件選択中</span>
+      <input id="bulk-tag-input" list="existing-tags" placeholder="タグ名を入力してEnter(追加)" ${
+        selectedIds.size === 0 ? 'disabled' : ''
+      } />
+      <datalist id="existing-tags">${allTags.map((t) => `<option value="${escapeHtml(t)}">`).join('')}</datalist>
+      <button id="bulk-tag-apply" ${selectedIds.size === 0 ? 'disabled' : ''}>タグを追加</button>
+      <button id="bulk-tag-remove" class="danger" ${selectedIds.size === 0 ? 'disabled' : ''}>タグを外す</button>
+      <button id="bulk-selection-clear" ${selectedIds.size === 0 ? 'disabled' : ''}>選択解除</button>
+    `;
+    appEl.appendChild(bar);
+    const input = bar.querySelector('#bulk-tag-input');
+    bar.querySelector('#bulk-tag-apply').addEventListener('click', () => applyBulkTag(input.value, 'add'));
+    bar.querySelector('#bulk-tag-remove').addEventListener('click', () => applyBulkTag(input.value, 'remove'));
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') applyBulkTag(input.value, 'add');
+    });
+    bar.querySelector('#bulk-selection-clear').addEventListener('click', () => {
+      selectedIds.clear();
+      renderPostsView();
+    });
+  }
+}
+
+async function removeTagFromPost(postId, tag) {
+  try {
+    await fetchJson('/api/tags/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postIds: [postId], tag, action: 'remove' }),
+    });
+  } catch (e) {
+    alert(`タグの削除に失敗しました: ${e.message}`);
+    return;
+  }
+
+  const post = allPosts.find((p) => p.postId === postId);
+  if (post && post.tags) {
+    post.tags = post.tags.filter((t) => t !== tag);
+  }
+  // 他のどの投稿にも使われていなければ、絞り込みチップからも消す
+  const stillUsed = allPosts.some((p) => p.tags && p.tags.includes(tag));
+  if (!stillUsed) {
+    allTags = allTags.filter((t) => t !== tag);
+    activeTagFilters.delete(tag);
+  }
+  renderPostsView();
+}
+
+async function applyBulkTag(rawTag, action) {
+  const tag = (rawTag || '').trim();
+  if (!tag || selectedIds.size === 0) return;
+  const postIds = Array.from(selectedIds);
+
+  try {
+    await fetchJson('/api/tags/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postIds, tag, action }),
+    });
+  } catch (e) {
+    alert(`タグの${action === 'remove' ? '削除' : '追加'}に失敗しました: ${e.message}`);
+    return;
+  }
+
+  // ローカルのデータにも反映(再取得せず即座に画面へ反映するため)
+  postIds.forEach((id) => {
+    const post = allPosts.find((p) => p.postId === id);
+    if (!post) return;
+    if (action === 'remove') {
+      if (post.tags) post.tags = post.tags.filter((t) => t !== tag);
+    } else {
+      if (!post.tags) post.tags = [];
+      if (!post.tags.includes(tag)) post.tags.push(tag);
+    }
+  });
+
+  if (action === 'add') {
+    if (!allTags.includes(tag)) {
+      allTags.push(tag);
+      allTags.sort();
+    }
+  } else {
+    const stillUsed = allPosts.some((p) => p.tags && p.tags.includes(tag));
+    if (!stillUsed) {
+      allTags = allTags.filter((t) => t !== tag);
+      activeTagFilters.delete(tag);
+    }
+  }
+
+  selectedIds.clear();
+  renderPostsView();
+}
+
+// ---- 投稿内メディア一覧 ----
+
+async function showMedia(user, postId) {
+  state = { postId };
+  titleEl.textContent = `投稿: ${postId}`;
+  renderBreadcrumb();
+  try {
+    const data = await fetchJson(`/api/media/${encodeURIComponent(user)}/${encodeURIComponent(postId)}`);
+    if (!data.items || data.items.length === 0) {
+      renderEmpty('メディアが見つかりません。');
+      return;
+    }
+    appEl.innerHTML = '';
+    const grid = document.createElement('div');
+    grid.className = 'grid';
+    data.items.forEach((it) => {
+      const card = document.createElement('div');
+      card.className = 'card';
+      const thumbHtml =
+        it.type === 'video'
+          ? `<video src="${it.url}" muted preload="metadata"></video>`
+          : `<img src="${it.url}" loading="lazy" alt="${escapeHtml(it.prompt)}" />`;
+      card.innerHTML = `
+        <div class="media-card">
+          ${thumbHtml}
+          <div class="caption" title="${escapeHtml(it.prompt)}">${
+        escapeHtml(it.prompt) || '<span class="no-prompt">(プロンプトなし)</span>'
+      }</div>
+        </div>
+      `;
+      card.addEventListener('click', () => openModal(it.type, it.url));
+      grid.appendChild(card);
+    });
+    appEl.appendChild(grid);
+  } catch (e) {
+    renderEmpty(`読み込みに失敗しました: ${e.message}`);
+  }
+}
+
+showPosts();
