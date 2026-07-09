@@ -189,6 +189,77 @@ function saveTags(tags) {
   fs.writeFileSync(TAGS_FILE, JSON.stringify(tags, null, 2), 'utf-8');
 }
 
+const CATEGORIES_FILE = path.join(CONTENT_DIR, 'categories.json');
+const VALID_CATEGORIES = ['実写', 'アニメ'];
+
+/**
+ * content/categories.json を読み込む。 { "投稿id": "実写" | "アニメ" } という形。
+ * ファイルが無い/壊れている場合は空オブジェクトを返す。
+ */
+function loadCategories() {
+  try {
+    const raw = fs.readFileSync(CATEGORIES_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveCategories(categories) {
+  fs.writeFileSync(CATEGORIES_FILE, JSON.stringify(categories, null, 2), 'utf-8');
+}
+
+/**
+ * 既存のtags.jsonに「実写」「アニメ」というタグが付いている投稿があれば、
+ * categories.jsonへ移行し、タグ側からは取り除く。
+ * categories.jsonがまだ存在しない場合のみ、起動時に一度だけ実行する。
+ */
+function migrateCategoryTagsIfNeeded() {
+  if (fs.existsSync(CATEGORIES_FILE)) return; // 既に移行済み(または運用中)
+
+  const tags = loadTags();
+  const categories = {};
+  let tagsChanged = false;
+
+  for (const [postId, tagList] of Object.entries(tags)) {
+    if (!Array.isArray(tagList)) continue;
+    const found = tagList.find((t) => VALID_CATEGORIES.includes(t));
+    if (found) {
+      categories[postId] = found;
+      tags[postId] = tagList.filter((t) => !VALID_CATEGORIES.includes(t));
+      if (tags[postId].length === 0) delete tags[postId];
+      tagsChanged = true;
+    }
+  }
+
+  if (tagsChanged) {
+    saveTags(tags);
+    console.log('タグ「実写」「アニメ」を種別(category)へ移行しました。');
+  }
+  saveCategories(categories); // 空でも作成しておく(以後、この移行処理を再実行しないため)
+}
+
+const LIKES_FILE = path.join(CONTENT_DIR, 'likes.json');
+
+/**
+ * content/likes.json を読み込む。 { "投稿id": true } という形。
+ * ファイルが無い/壊れている場合は空オブジェクトを返す。
+ */
+function loadLikes() {
+  try {
+    const raw = fs.readFileSync(LIKES_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function saveLikes(likes) {
+  fs.writeFileSync(LIKES_FILE, JSON.stringify(likes, null, 2), 'utf-8');
+}
+
 function readRequestBody(req) {
   return new Promise((resolve, reject) => {
     let body = '';
@@ -242,9 +313,11 @@ const server = http.createServer((req, res) => {
     return sendJson(res, results);
   }
 
-  // ---- API: 全ユーザー横断の投稿一覧(タグ付き) ----
+  // ---- API: 全ユーザー横断の投稿一覧(タグ・種別・いいね付き) ----
   if (pathname === '/api/posts' && req.method === 'GET') {
     const tags = loadTags();
+    const categories = loadCategories();
+    const likes = loadLikes();
     const users = listDirs(CONTENT_DIR);
     const allPosts = [];
     for (const user of users) {
@@ -263,11 +336,72 @@ const server = http.createServer((req, res) => {
           postId,
           thumbnail,
           tags: tags[postId] || [],
+          category: categories[postId] || null,
+          liked: likes[postId] === true,
           createTime: createTimeMap.get(postId) || null,
         });
       }
     }
     return sendJson(res, allPosts);
+  }
+
+  // ---- API: いいねのトグル ----
+  if (pathname === '/api/likes/toggle' && req.method === 'POST') {
+    readRequestBody(req)
+      .then((body) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(body);
+        } catch (e) {
+          return send(res, 400, 'Invalid JSON');
+        }
+        const { postId } = parsed || {};
+        if (!postId) return send(res, 400, 'Invalid params');
+
+        const likes = loadLikes();
+        const newState = !likes[postId];
+        if (newState) {
+          likes[postId] = true;
+        } else {
+          delete likes[postId];
+        }
+        saveLikes(likes);
+        return sendJson(res, { liked: newState });
+      })
+      .catch((e) => send(res, 400, `Error: ${e.message}`));
+    return;
+  }
+
+  // ---- API: 複数投稿への種別(実写/アニメ)一括設定 ----
+  if (pathname === '/api/categories/bulk' && req.method === 'POST') {
+    readRequestBody(req)
+      .then((body) => {
+        let parsed;
+        try {
+          parsed = JSON.parse(body);
+        } catch (e) {
+          return send(res, 400, 'Invalid JSON');
+        }
+        const { postIds, category } = parsed || {};
+        if (!Array.isArray(postIds) || postIds.length === 0) {
+          return send(res, 400, 'Invalid params');
+        }
+        if (category !== null && !VALID_CATEGORIES.includes(category)) {
+          return send(res, 400, 'Invalid category');
+        }
+        const categories = loadCategories();
+        for (const id of postIds) {
+          if (category === null) {
+            delete categories[id];
+          } else {
+            categories[id] = category;
+          }
+        }
+        saveCategories(categories);
+        return sendJson(res, { ok: true });
+      })
+      .catch((e) => send(res, 400, `Error: ${e.message}`));
+    return;
   }
 
   // ---- API: 使われている全タグ(絞り込みチップ用) ----
@@ -372,6 +506,8 @@ const server = http.createServer((req, res) => {
   if (!staticPath) return send(res, 400, 'Invalid path');
   serveStaticFile(res, staticPath);
 });
+
+migrateCategoryTagsIfNeeded();
 
 server.listen(PORT, HOST, () => {
   console.log(`http://${HOST}:${PORT} で起動しました`);

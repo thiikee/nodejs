@@ -15,6 +15,8 @@ let allTags = []; // 使われている全タグ(絞り込みチップ用)
 let postsLoaded = false;
 
 let activeTagFilters = new Set();
+let categoryFilter = null; // null=すべて, '実写', 'アニメ'
+let likedOnlyFilter = false;
 let sortOrder = 'desc'; // 'desc'=新しい順, 'asc'=古い順
 let currentPage = 1;
 let selectionMode = false;
@@ -130,6 +132,12 @@ async function showPosts() {
 
 function getFilteredPosts() {
   let list = allPosts;
+  if (categoryFilter) {
+    list = list.filter((p) => p.category === categoryFilter);
+  }
+  if (likedOnlyFilter) {
+    list = list.filter((p) => p.liked);
+  }
   if (activeTagFilters.size > 0) {
     list = list.filter((p) => {
       const tags = p.tags || [];
@@ -160,6 +168,41 @@ function renderPostsView() {
   const pagePosts = filtered.slice(startIdx, startIdx + PAGE_SIZE);
 
   appEl.innerHTML = '';
+
+  // ---- 種別(実写/アニメ)切り替え ----
+  const categoryBar = document.createElement('div');
+  categoryBar.className = 'category-bar';
+  const categoryOptions = [
+    { value: null, label: 'すべて' },
+    { value: '実写', label: '実写' },
+    { value: 'アニメ', label: 'アニメ' },
+  ];
+  categoryBar.innerHTML =
+    categoryOptions
+      .map(
+        (opt) =>
+          `<button class="category-btn ${categoryFilter === opt.value ? 'active' : ''}" data-value="${escapeHtml(
+            opt.value || ''
+          )}">${escapeHtml(opt.label)}</button>`
+      )
+      .join('') +
+    `<span class="bar-spacer"></span>` +
+    `<button id="liked-only-toggle" class="category-btn like-toggle ${likedOnlyFilter ? 'active' : ''}">${
+      likedOnlyFilter ? '♥' : '♡'
+    } いいねのみ</button>`;
+  appEl.appendChild(categoryBar);
+  categoryBar.querySelectorAll('.category-btn[data-value]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      categoryFilter = btn.dataset.value || null;
+      currentPage = 1;
+      renderPostsView();
+    });
+  });
+  categoryBar.querySelector('#liked-only-toggle').addEventListener('click', () => {
+    likedOnlyFilter = !likedOnlyFilter;
+    currentPage = 1;
+    renderPostsView();
+  });
 
   // ---- フィルターバー ----
   const filterBar = document.createElement('div');
@@ -230,9 +273,21 @@ function renderPostsView() {
       card.innerHTML = `
         ${selectionMode ? `<div class="select-overlay"><input type="checkbox" ${checked} tabindex="-1" /></div>` : ''}
         ${
+          !selectionMode
+            ? `<button class="like-btn ${p.liked ? 'liked' : ''}" data-post="${escapeHtml(p.postId)}" title="いいね">${
+                p.liked ? '♥' : '♡'
+              }</button>`
+            : ''
+        }
+        ${
           p.thumbnail
             ? `<img src="${p.thumbnail}" loading="lazy" alt="${escapeHtml(p.postId)}" />`
             : '<div class="no-thumb">画像なし</div>'
+        }
+        ${
+          p.category
+            ? `<div class="category-badge ${p.category === 'アニメ' ? 'anime' : 'live'}">${escapeHtml(p.category)}</div>`
+            : ''
         }
         ${
           p.tags && p.tags.length > 0
@@ -270,6 +325,12 @@ function renderPostsView() {
         removeTagFromPost(btn.dataset.post, btn.dataset.removeTag);
       });
     });
+    grid.querySelectorAll('.like-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleLike(btn.dataset.post);
+      });
+    });
   }
 
   // ---- ページング ----
@@ -290,7 +351,7 @@ function renderPostsView() {
   });
   appEl.appendChild(pager);
 
-  // ---- 選択中の一括タグ付けバー ----
+  // ---- 選択中の一括タグ付け・種別設定バー ----
   if (selectionMode) {
     const bar = document.createElement('div');
     bar.className = 'bulk-tag-bar';
@@ -302,6 +363,11 @@ function renderPostsView() {
       <datalist id="existing-tags">${allTags.map((t) => `<option value="${escapeHtml(t)}">`).join('')}</datalist>
       <button id="bulk-tag-apply" ${selectedIds.size === 0 ? 'disabled' : ''}>タグを追加</button>
       <button id="bulk-tag-remove" class="danger" ${selectedIds.size === 0 ? 'disabled' : ''}>タグを外す</button>
+      <span class="bulk-divider"></span>
+      <button id="bulk-cat-live" ${selectedIds.size === 0 ? 'disabled' : ''}>実写にする</button>
+      <button id="bulk-cat-anime" ${selectedIds.size === 0 ? 'disabled' : ''}>アニメにする</button>
+      <button id="bulk-cat-clear" class="danger" ${selectedIds.size === 0 ? 'disabled' : ''}>種別解除</button>
+      <span class="bulk-divider"></span>
       <button id="bulk-selection-clear" ${selectedIds.size === 0 ? 'disabled' : ''}>選択解除</button>
     `;
     appEl.appendChild(bar);
@@ -311,11 +377,56 @@ function renderPostsView() {
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter') applyBulkTag(input.value, 'add');
     });
+    bar.querySelector('#bulk-cat-live').addEventListener('click', () => applyBulkCategory('実写'));
+    bar.querySelector('#bulk-cat-anime').addEventListener('click', () => applyBulkCategory('アニメ'));
+    bar.querySelector('#bulk-cat-clear').addEventListener('click', () => applyBulkCategory(null));
     bar.querySelector('#bulk-selection-clear').addEventListener('click', () => {
       selectedIds.clear();
       renderPostsView();
     });
   }
+}
+
+async function toggleLike(postId) {
+  let newState;
+  try {
+    const res = await fetchJson('/api/likes/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId }),
+    });
+    newState = res.liked;
+  } catch (e) {
+    alert(`いいねの更新に失敗しました: ${e.message}`);
+    return;
+  }
+  const post = allPosts.find((p) => p.postId === postId);
+  if (post) post.liked = newState;
+  renderPostsView();
+}
+
+async function applyBulkCategory(category) {
+  if (selectedIds.size === 0) return;
+  const postIds = Array.from(selectedIds);
+
+  try {
+    await fetchJson('/api/categories/bulk', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postIds, category }),
+    });
+  } catch (e) {
+    alert(`種別の設定に失敗しました: ${e.message}`);
+    return;
+  }
+
+  postIds.forEach((id) => {
+    const post = allPosts.find((p) => p.postId === id);
+    if (post) post.category = category;
+  });
+
+  selectedIds.clear();
+  renderPostsView();
 }
 
 async function removeTagFromPost(postId, tag) {
