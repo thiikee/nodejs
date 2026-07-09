@@ -110,6 +110,32 @@ function idFromFilename(filename) {
 }
 
 /**
+ * content/<user>/posts.json を読み込み、投稿本体(トップレベルのみ)の
+ * id -> createTime のマップを作る。ファイルが無い/壊れている場合は空のMapを返す。
+ */
+function loadCreateTimeMap(user) {
+  const map = new Map();
+  const jsonPath = safeJoin(CONTENT_DIR, user, 'posts.json');
+  if (!jsonPath) return map;
+
+  let posts;
+  try {
+    const raw = fs.readFileSync(jsonPath, 'utf-8');
+    posts = JSON.parse(raw);
+  } catch (e) {
+    return map;
+  }
+  if (!Array.isArray(posts)) return map;
+
+  for (const p of posts) {
+    if (p && p.id && p.createTime) {
+      map.set(p.id, p.createTime);
+    }
+  }
+  return map;
+}
+
+/**
  * content/<user>/posts.json を読み込み、id -> prompt のマップを作る。
  * 投稿本体とchildPosts(何階層でも)を再帰的にたどる。
  * ファイルが無い/壊れている場合は空のMapを返す。
@@ -191,6 +217,31 @@ const server = http.createServer((req, res) => {
     return sendJson(res, listDirs(CONTENT_DIR));
   }
 
+  // ---- API: 全ユーザー・全投稿の動画をフラットに(プロンプト検索用) ----
+  if (pathname === '/api/videos' && req.method === 'GET') {
+    const users = listDirs(CONTENT_DIR);
+    const results = [];
+    for (const user of users) {
+      const userDir = path.join(CONTENT_DIR, user);
+      const promptMap = loadPromptMap(user);
+      const postIds = listDirs(userDir);
+      for (const postId of postIds) {
+        const postDir = path.join(userDir, postId);
+        const videoFiles = listFiles(postDir, ['.mp4']);
+        const base = `/content/${encodeURIComponent(user)}/${encodeURIComponent(postId)}/`;
+        for (const f of videoFiles) {
+          results.push({
+            user,
+            postId,
+            url: base + encodeURIComponent(f),
+            prompt: promptMap.get(idFromFilename(f)) || '',
+          });
+        }
+      }
+    }
+    return sendJson(res, results);
+  }
+
   // ---- API: 全ユーザー横断の投稿一覧(タグ付き) ----
   if (pathname === '/api/posts' && req.method === 'GET') {
     const tags = loadTags();
@@ -199,6 +250,7 @@ const server = http.createServer((req, res) => {
     for (const user of users) {
       const userDir = path.join(CONTENT_DIR, user);
       const postIds = listDirs(userDir);
+      const createTimeMap = loadCreateTimeMap(user);
       for (const postId of postIds) {
         const postDir = path.join(userDir, postId);
         const jpgs = listFiles(postDir, ['.jpg', '.jpeg', '.png']);
@@ -206,7 +258,13 @@ const server = http.createServer((req, res) => {
           jpgs.length > 0
             ? `/content/${encodeURIComponent(user)}/${encodeURIComponent(postId)}/${encodeURIComponent(jpgs[0])}`
             : null;
-        allPosts.push({ user, postId, thumbnail, tags: tags[postId] || [] });
+        allPosts.push({
+          user,
+          postId,
+          thumbnail,
+          tags: tags[postId] || [],
+          createTime: createTimeMap.get(postId) || null,
+        });
       }
     }
     return sendJson(res, allPosts);

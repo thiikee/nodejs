@@ -5,6 +5,7 @@ const modal = document.getElementById('video-modal');
 const modalVideo = document.getElementById('modal-video');
 const modalImage = document.getElementById('modal-image');
 const modalClose = document.getElementById('modal-close');
+const searchInput = document.getElementById('global-search');
 
 const PAGE_SIZE = 50;
 
@@ -14,9 +15,31 @@ let allTags = []; // 使われている全タグ(絞り込みチップ用)
 let postsLoaded = false;
 
 let activeTagFilters = new Set();
+let sortOrder = 'desc'; // 'desc'=新しい順, 'asc'=古い順
 let currentPage = 1;
 let selectionMode = false;
 let selectedIds = new Set();
+
+let allVideos = []; // {user, postId, url, prompt} の配列(検索用、初回検索時のみ取得)
+let videosLoaded = false;
+
+searchInput.addEventListener('keydown', async (e) => {
+  if (e.key !== 'Enter') return;
+  const q = e.target.value.trim();
+  if (!q) {
+    showPosts();
+    return;
+  }
+  await ensureVideosLoaded();
+  renderSearchResults(q);
+});
+
+// 検索ボックスを空にした時だけは、即座に投稿一覧に戻す(こちらは軽い処理なのでリアルタイムでよい)
+searchInput.addEventListener('input', (e) => {
+  if (!e.target.value.trim()) {
+    showPosts();
+  }
+});
 
 modalClose.addEventListener('click', closeModal);
 modal.addEventListener('click', (e) => {
@@ -86,6 +109,7 @@ function renderEmpty(message) {
 
 async function showPosts() {
   state = { postId: null };
+  searchInput.value = '';
   titleEl.textContent = '投稿一覧';
   renderBreadcrumb();
 
@@ -105,14 +129,26 @@ async function showPosts() {
 }
 
 function getFilteredPosts() {
-  if (activeTagFilters.size === 0) return allPosts;
-  return allPosts.filter((p) => {
-    const tags = p.tags || [];
-    for (const t of activeTagFilters) {
-      if (!tags.includes(t)) return false;
-    }
-    return true;
+  let list = allPosts;
+  if (activeTagFilters.size > 0) {
+    list = list.filter((p) => {
+      const tags = p.tags || [];
+      for (const t of activeTagFilters) {
+        if (!tags.includes(t)) return false;
+      }
+      return true;
+    });
+  }
+
+  const sorted = [...list].sort((a, b) => {
+    // createTimeが無いものは末尾に回す
+    if (!a.createTime && !b.createTime) return 0;
+    if (!a.createTime) return 1;
+    if (!b.createTime) return -1;
+    const diff = new Date(a.createTime) - new Date(b.createTime);
+    return sortOrder === 'asc' ? diff : -diff;
   });
+  return sorted;
 }
 
 function renderPostsView() {
@@ -138,9 +174,12 @@ function renderPostsView() {
         .join('')}
       ${activeTagFilters.size > 0 ? '<button class="tag-chip clear-chip" data-clear="1">✕ 絞り込み解除</button>' : ''}
     </div>
-    <button id="selection-toggle" class="mode-toggle">${
-      selectionMode ? '選択モードを終了' : '選択モードで一括タグ付け'
-    }</button>
+    <div class="right-controls">
+      <button id="sort-toggle" class="mode-toggle">作成日: ${sortOrder === 'desc' ? '新しい順' : '古い順'}</button>
+      <button id="selection-toggle" class="mode-toggle">${
+        selectionMode ? '選択モードを終了' : '選択モードで一括タグ付け'
+      }</button>
+    </div>
   `;
   appEl.appendChild(filterBar);
 
@@ -164,6 +203,11 @@ function renderPostsView() {
       renderPostsView();
     });
   }
+  filterBar.querySelector('#sort-toggle').addEventListener('click', () => {
+    sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+    currentPage = 1;
+    renderPostsView();
+  });
   filterBar.querySelector('#selection-toggle').addEventListener('click', () => {
     selectionMode = !selectionMode;
     if (!selectionMode) selectedIds.clear();
@@ -348,6 +392,7 @@ async function applyBulkTag(rawTag, action) {
 
 async function showMedia(user, postId) {
   state = { postId };
+  searchInput.value = '';
   titleEl.textContent = `投稿: ${postId}`;
   renderBreadcrumb();
   try {
@@ -381,6 +426,94 @@ async function showMedia(user, postId) {
   } catch (e) {
     renderEmpty(`読み込みに失敗しました: ${e.message}`);
   }
+}
+
+// ---- プロンプト検索(投稿の階層を横断してフラットに検索) ----
+
+async function ensureVideosLoaded() {
+  if (videosLoaded) return;
+  await fetchJson('/api/videos').then((data) => {
+    allVideos = data;
+    videosLoaded = true;
+  });
+}
+
+let currentSearchQuery = '';
+let searchPage = 1;
+
+function renderSearchResults(query) {
+  state = { postId: null };
+  if (query !== currentSearchQuery) {
+    currentSearchQuery = query;
+    searchPage = 1;
+  }
+  titleEl.textContent = `動画検索: "${query}"`;
+  breadcrumbEl.innerHTML = '<a href="#" data-nav="posts">投稿一覧</a> / <span>検索結果</span>';
+  breadcrumbEl.querySelector('a[data-nav]').addEventListener('click', (e) => {
+    e.preventDefault();
+    showPosts();
+  });
+
+  const q = query.toLowerCase();
+  const results = allVideos.filter((v) => v.prompt && v.prompt.toLowerCase().includes(q));
+
+  appEl.innerHTML = '';
+  if (results.length === 0) {
+    renderEmpty(`「${query}」に一致する動画が見つかりません。`);
+    return;
+  }
+
+  const totalPages = Math.max(1, Math.ceil(results.length / PAGE_SIZE));
+  if (searchPage > totalPages) searchPage = totalPages;
+  if (searchPage < 1) searchPage = 1;
+  const startIdx = (searchPage - 1) * PAGE_SIZE;
+  const pageResults = results.slice(startIdx, startIdx + PAGE_SIZE);
+
+  const countMsg = document.createElement('p');
+  countMsg.className = 'search-count';
+  countMsg.textContent = `${results.length}件ヒット(${searchPage}/${totalPages}ページ)`;
+  appEl.appendChild(countMsg);
+
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+  pageResults.forEach((v) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.innerHTML = `
+      <div class="media-card">
+        <video src="${v.url}" muted preload="metadata"></video>
+        <div class="caption" title="${escapeHtml(v.prompt)}">${escapeHtml(v.prompt)}</div>
+        <button class="goto-post-btn" type="button">この投稿を開く</button>
+      </div>
+    `;
+    card.querySelector('video').addEventListener('click', (e) => {
+      e.stopPropagation();
+      openModal('video', v.url);
+    });
+    card.querySelector('.goto-post-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      showMedia(v.user, v.postId);
+    });
+    grid.appendChild(card);
+  });
+  appEl.appendChild(grid);
+
+  const pager = document.createElement('div');
+  pager.className = 'pager';
+  pager.innerHTML = `
+    <button id="search-prev-page" ${searchPage <= 1 ? 'disabled' : ''}>← 前へ</button>
+    <span>${searchPage} / ${totalPages} ページ</span>
+    <button id="search-next-page" ${searchPage >= totalPages ? 'disabled' : ''}>次へ →</button>
+  `;
+  pager.querySelector('#search-prev-page').addEventListener('click', () => {
+    searchPage--;
+    renderSearchResults(currentSearchQuery);
+  });
+  pager.querySelector('#search-next-page').addEventListener('click', () => {
+    searchPage++;
+    renderSearchResults(currentSearchQuery);
+  });
+  appEl.appendChild(pager);
 }
 
 showPosts();
