@@ -17,11 +17,14 @@
   <main id="app"></main>
 
   <div id="video-modal" class="modal hidden">
+    <button id="modal-prev" class="modal-nav modal-nav-prev" aria-label="前の動画">‹</button>
     <div class="modal-content">
       <button id="modal-close" aria-label="閉じる">✕</button>
       <video id="modal-video" controls autoplay playsinline></video>
       <img id="modal-image" />
+      <div id="modal-caption" class="modal-caption"></div>
     </div>
+    <button id="modal-next" class="modal-nav modal-nav-next" aria-label="次の動画">›</button>
   </div>
 
   <script src="/app.js"></script>

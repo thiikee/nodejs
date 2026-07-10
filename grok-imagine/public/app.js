@@ -4,7 +4,10 @@ const breadcrumbEl = document.getElementById('breadcrumb');
 const modal = document.getElementById('video-modal');
 const modalVideo = document.getElementById('modal-video');
 const modalImage = document.getElementById('modal-image');
+const modalCaption = document.getElementById('modal-caption');
 const modalClose = document.getElementById('modal-close');
+const modalPrev = document.getElementById('modal-prev');
+const modalNext = document.getElementById('modal-next');
 const searchInput = document.getElementById('global-search');
 
 const PAGE_SIZE = 50;
@@ -24,6 +27,10 @@ let selectedIds = new Set();
 
 let allVideos = []; // {user, postId, url, prompt} の配列(検索用、初回検索時のみ取得)
 let videosLoaded = false;
+
+// モーダルで今表示しているリストと位置(前へ/次への移動に使う)
+let currentMediaList = []; // [{type, url}, ...]
+let currentMediaIndex = -1;
 
 searchInput.addEventListener('keydown', async (e) => {
   if (e.key !== 'Enter') return;
@@ -47,8 +54,13 @@ modalClose.addEventListener('click', closeModal);
 modal.addEventListener('click', (e) => {
   if (e.target === modal) closeModal();
 });
+modalPrev.addEventListener('click', () => openModalAt(currentMediaIndex - 1));
+modalNext.addEventListener('click', () => openModalAt(currentMediaIndex + 1));
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeModal();
+  if (modal.classList.contains('hidden')) return;
+  if (e.key === 'ArrowLeft') openModalAt(currentMediaIndex - 1);
+  if (e.key === 'ArrowRight') openModalAt(currentMediaIndex + 1);
 });
 
 function closeModal() {
@@ -59,22 +71,48 @@ function closeModal() {
   modalVideo.classList.add('hidden');
   modalImage.removeAttribute('src');
   modalImage.classList.add('hidden');
+  modalCaption.textContent = '';
+  modalCaption.classList.add('hidden');
+  currentMediaList = [];
+  currentMediaIndex = -1;
 }
 
-function openModal(type, src) {
-  if (type === 'video') {
+/**
+ * currentMediaList の中の index番目を表示する。
+ * リストの外(先頭より前・末尾より後ろ)を指定した場合は何もしない。
+ */
+function openModalAt(index) {
+  if (index < 0 || index >= currentMediaList.length) return;
+  currentMediaIndex = index;
+  const item = currentMediaList[index];
+
+  if (item.type === 'video') {
     modalImage.classList.add('hidden');
     modalImage.removeAttribute('src');
     modalVideo.classList.remove('hidden');
-    modalVideo.src = src;
+    modalVideo.src = item.url;
   } else {
     modalVideo.classList.add('hidden');
     modalVideo.pause();
     modalVideo.removeAttribute('src');
     modalImage.classList.remove('hidden');
-    modalImage.src = src;
+    modalImage.src = item.url;
   }
   modal.classList.remove('hidden');
+  modalCaption.textContent = item.prompt || '';
+  modalCaption.classList.toggle('hidden', !item.prompt);
+
+  modalPrev.disabled = currentMediaIndex <= 0;
+  modalNext.disabled = currentMediaIndex >= currentMediaList.length - 1;
+}
+
+/**
+ * リストとその中の開始位置を指定してモーダルを開く。
+ * 投稿内の動画一覧・検索結果一覧、どちらからでも使う。
+ */
+function openModalWithList(list, startIndex) {
+  currentMediaList = list;
+  openModalAt(startIndex);
 }
 
 async function fetchJson(url, options) {
@@ -515,7 +553,7 @@ async function showMedia(user, postId) {
     appEl.innerHTML = '';
     const grid = document.createElement('div');
     grid.className = 'grid';
-    data.items.forEach((it) => {
+    data.items.forEach((it, index) => {
       const card = document.createElement('div');
       card.className = 'card';
       const thumbHtml =
@@ -530,7 +568,7 @@ async function showMedia(user, postId) {
       }</div>
         </div>
       `;
-      card.addEventListener('click', () => openModal(it.type, it.url));
+      card.addEventListener('click', () => openModalWithList(data.items, index));
       grid.appendChild(card);
     });
     appEl.appendChild(grid);
@@ -587,7 +625,8 @@ function renderSearchResults(query) {
 
   const grid = document.createElement('div');
   grid.className = 'grid';
-  pageResults.forEach((v) => {
+  const searchMediaList = pageResults.map((v) => ({ type: 'video', url: v.url, prompt: v.prompt }));
+  pageResults.forEach((v, index) => {
     const card = document.createElement('div');
     card.className = 'card';
     card.innerHTML = `
@@ -599,7 +638,7 @@ function renderSearchResults(query) {
     `;
     card.querySelector('video').addEventListener('click', (e) => {
       e.stopPropagation();
-      openModal('video', v.url);
+      openModalWithList(searchMediaList, index);
     });
     card.querySelector('.goto-post-btn').addEventListener('click', (e) => {
       e.stopPropagation();
